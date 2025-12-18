@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Dataset
+fer_data/
+*.csv
+
+# Models (Large files)
+*.pth
+
+# VS Code
+.vscode/
+
+# System
+.DS_Store

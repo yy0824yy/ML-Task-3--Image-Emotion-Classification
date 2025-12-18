@@ -1,0 +1,74 @@
+================================================================
+项目技术方案总结 (Technical Solution Summary) - Final Version
+================================================================
+
+1. 核心策略：加权异构模型融合 (Weighted Heterogeneous Ensemble)
+----------------------------------------------------------------
+为了突破单一模型的性能瓶颈，我们构建了一个包含 20 个模型的超级集成系统。利用不同架构对图像特征提取的差异性，并根据模型能力进行加权融合。
+
+*   模型架构 (共 20 个模型):
+    1.  ConvNeXt-Base (5个): 最强主力，权重 1.5。
+    2.  EfficientNetV2-S (5个): 高效架构，权重 1.2。
+    3.  ConvNeXt-Tiny (5个): 轻量化模型，权重 1.0。
+    4.  ResNet101 (5个): 基准模型，权重 0.8。
+
+*   融合方式:
+    采用“加权 Soft Voting”策略。相比于简单的平均融合，加权融合赋予了强模型（如 ConvNeXt-Base）更高的话语权，有效修正了弱模型带来的噪声干扰。
+
+2. 模型改进：注意力机制 (Attention Mechanism)
+----------------------------------------------------------------
+*   CBAM (Convolutional Block Attention Module): 
+    在所有模型的分类头（Head）之前引入了 CBAM 模块。
+    - 通道注意力 (Channel Attention): 识别“什么”特征是重要的。
+    - 空间注意力 (Spatial Attention): 识别“哪里”是重要的（聚焦人脸区域）。
+
+3. 数据增强与预处理 (Data Augmentation)
+----------------------------------------------------------------
+*   训练阶段:
+    - RandAugment (N=2, M=7)
+    - MixUp (alpha=0.2, 前60% Epoch)
+    - 伪标签 (Pseudo-Labeling): 利用集成模型对测试集进行预测，筛选高置信度样本 (>0.95) 加入训练集，实现半监督学习。
+
+*   测试阶段 (TTA):
+    - TenCrop: 采用“十重裁剪”策略（中心+四角+翻转），消除构图差异。
+
+4. 训练优化 (Training Optimization)
+----------------------------------------------------------------
+*   5-Fold Cross-Validation: 严格的 5 折分层交叉验证。
+*   Label Smoothing (0.15): 防止过拟合。
+*   WeightedRandomSampler: 解决类别不平衡。
+*   OneCycleLR: 超收敛学习率策略。
+
+5. 关键修正 (Critical Fix)
+----------------------------------------------------------------
+*   Label Mapping Alignment: 
+    修正了本地训练数据（字母序）与 Kaggle 评估标准（FER2013 序）之间的标签错位问题 (Neutral/Sad/Surprise 映射)。
+
+6. 最终成果
+----------------------------------------------------------------
+*   基准分数: ~0.43 (存在映射错误)
+*   修正映射后: 0.731
+*   异构集成 (ConvNeXt/EffNet): 0.739
+*   伪标签 (Pseudo-Labeling): 0.741
+*   加权集成 (Weighted Ensemble): 0.744
+*   回归 Logit Avg + No Focal Loss: 0.745 (Best Score)
+*   分布对齐 (Distribution Alignment): 0.741 (Failed Attempt)
+
+7. 最终突破策略 (The 0.745 Solution)
+----------------------------------------------------------------
+在 0.744 瓶颈期，我们尝试了 Swin Transformer 和 Focal Loss，但发现效果下降。最终通过以下策略实现突破：
+1.  **回归 Logit Averaging**: 放弃概率平均，回归更鲁棒的 Logit 加权平均。
+2.  **关闭 Focal Loss**: 回归 Label Smoothing CrossEntropy，避免对噪声样本过拟合。
+3.  **迭代伪标签**: 利用 0.744 版本的强模型重新生成高质量伪标签，并微调 ConvNeXt-Base。
+4.  **多尺度 TTA**: 引入 Multi-Scale (235, 256, 280) + TenCrop 推理。
+
+8. 失败尝试记录 (Failed Attempts)
+----------------------------------------------------------------
+*   **Swin Transformer + Focal Loss**: 导致分数下降至 0.73。原因可能是小数据集上 Transformer 训练不足，以及 Focal Loss 对噪声过拟合。
+*   **分布对齐 (Distribution Alignment)**: 尝试通过后处理权重修正 Sad/Surprise 的分布偏差，但分数下降至 0.741。说明模型虽然分布有偏差，但强行矫正破坏了其内部的置信度排序。
+
+    在推理阶段引入后处理权重修正 (Sad*1.3, Surprise*0.7)，强制对齐测试集与训练集的类别分布。
+3.  **迭代伪标签**: 利用 0.744 版本的强模型重新生成高质量伪标签，并微调 ConvNeXt-Base。
+4.  **多尺度 TTA**: 引入 Multi-Scale (235, 256, 280) + TenCrop 推理。
+*   加入伪标签: 0.741
+*   加权异构融合: 0.744 (最终最佳成绩)

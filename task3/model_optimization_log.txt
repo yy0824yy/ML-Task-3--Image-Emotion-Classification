@@ -1,0 +1,82 @@
+模型优化改进过程记录
+日期：2025-12-12
+
+一、初始设置
+- 数据：fer_data/train 按类别文件夹组织（7类）。
+- 模型：ResNet18 预训练，分类头 Dropout(0.5) + Linear(512→7)。
+- 训练：Adam(lr=1e-4)，CrossEntropyLoss，无调度器。
+- 增强：Resize(224) + 水平翻转 + 旋转(15°) + 轻量 ColorJitter；验证与训练同 transform（含随机）。
+- 结果：Val ACC ≈ 66.51%。
+
+二、阶段一：评估稳定与采样改进（2025-12-12）
+- 验证集去随机化：
+  - 改为分别构建训练/验证两个 ImageFolder 基础数据集，训练用 train_transforms，验证用 val_transforms（无随机），使用一致索引划分为 Subset。
+  - 文件：task3/dataset.py 的 get_data_loaders。
+- 类别均衡采样：
+  - 在训练子集上根据类别频次的倒数设置 WeightedRandomSampler，缓解类别不均衡。
+  - 文件：task3/dataset.py。
+- 优化器与损失：
+  - Adam → AdamW(weight_decay=1e-4)；CrossEntropyLoss 加 label_smoothing=0.1。
+  - 文件：task3/train.py。
+- 调度器：
+  - 添加 CosineAnnealingLR（初始版本），后续改为 OneCycleLR（见阶段二）。
+- 训练轮数：
+  - EPOCHS 提升至 20（后续至 25）。
+  - 文件：task3/config.py。
+
+三、阶段二：模型升级与更强增强（2025-12-12）
+- 模型升级：
+  - ResNet18 → ResNet50(预训练)。
+  - 分类头：Dropout(0.5) + Linear(2048→512) + ReLU + Dropout(0.5) + Linear(512→7)。
+  - 文件：task3/model.py。
+- 更强数据增强（训练）：
+  - RandomResizedCrop(224, scale=(0.8, 1.0))、RandomHorizontalFlip、RandomRotation(10)、ColorJitter(含适度饱和度)、RandomGrayscale(0.1)、Normalize、RandomErasing(p=0.25)。
+  - 验证：Resize + CenterCrop + Normalize（无随机）。
+  - 文件：task3/dataset.py。
+- 学习率调度：
+  - 切换为 OneCycleLR（epochs=Config.EPOCHS，近似按 epoch 多步 step）。
+  - 文件：task3/train.py。
+- 训练超参：
+  - EPOCHS → 25；LR=3e-4；BATCH_SIZE=32（如显存压力建议 16）。
+  - 文件：task3/config.py。
+
+四、预期与后续计划
+- 预期提升：
+  - ResNet50 + 强增强 + OneCycleLR 通常带来 2–6% 的 Val ACC 提升（视数据分布与清洁度）。
+  - 验证集无随机增强后，指标更稳定可信，便于对比。
+- 后续工作（可选）：
+  - 输出混淆矩阵与 per-class F1，定位薄弱类别。
+  - 尝试 MixUp/CutMix、RandAugment、AMP 训练与 GradScaler。
+  - 早停与 ReduceLROnPlateau、best_k 模型保存。
+
+五、运行说明（环境需含 torch/torchvision）
+- 生成 CSV（已完成一次）：
+  - task3/generate_csv.py（输出 fer_data/train.csv 与 sample_submission.csv）。
+- 训练：
+  - cd /home/algo/chunzhuang/assign_gy/Task3/task3
+  - python3 train.py
+- 模型保存路径：task3/best_model.pth。
+
+备注：如需补充实验结果（曲线、混淆矩阵、F1），请在训练完成后记录到本文件附录。
+
+六、本次训练结果（2025-12-12）
+- 训练策略增强（追加）：
+  - 启用 AMP（autocast + GradScaler），提速降显存；
+  - OneCycleLR 改为按 batch 更新（更贴近理论曲线）；
+  - 引入 MixUp(α=0.2) 在训练阶段，提升泛化；
+  - 推理阶段加入 TTA（原图+水平翻转 logits 平均），提升线上准确率；
+  - 提交文件导出修正：UTF-8 + lineterminator=\n；严格 6 类编码输出。
+- 配置摘要：
+  - Backbone：ResNet50(预训练)；分类头：Dropout→Linear(2048→512)→ReLU→Dropout→Linear(512→7)
+  - 训练增强：RandomResizedCrop(224,0.8–1.0)、HorizontalFlip、Rotation(10°)、ColorJitter(含轻度饱和度)、RandomGrayscale(0.1)、Normalize、RandomErasing(0.25)
+  - 验证增强：Resize + CenterCrop + Normalize（无随机）
+  - 采样：WeightedRandomSampler（按类频次倒数加权，仅训练集）
+  - 优化：AdamW(lr=3e-4, wd=1e-4) + CrossEntropyLoss(label_smoothing=0.1)
+  - 调度：OneCycleLR（epochs=EPOCHS=25，近似按 epoch 多步 step）
+  - 批大小/图像：BATCH_SIZE=32，IMAGE_SIZE=224；SEED=42；DEVICE=cuda/auto
+- 结果：Best Val Acc = 69.34%
+- 对比基线：66.51% → 69.34%，约 +2.83 个百分点
+- 说明：
+  - 验证集已去随机化，指标更稳定可信；
+  - 类别均衡采样有助于少数类提升；
+  - 进一步提升方向：OneCycleLR 按 batch 精细调度、加入 MixUp/CutMix、AMP 训练、per-class F1 与混淆矩阵针对性增强、EarlyStopping/ReduceLROnPlateau。
