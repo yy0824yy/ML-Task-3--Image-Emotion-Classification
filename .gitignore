@@ -10,6 +10,13 @@ fer_data/
 # Models (Large files)
 *.pth
 
+# Generated Images
+*.png
+
+# Logs and Reports
+*.txt
+*.tex
+
 # VS Code
 .vscode/
 
